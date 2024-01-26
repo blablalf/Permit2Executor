@@ -1,0 +1,3 @@
+[submodule "permit2batchExecutor/lib/forge-std"]
+	path = permit2batchExecutor/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
