@@ -4,3 +4,6 @@
 [submodule "permit2batchExecutor/lib/permit2"]
 	path = permit2batchExecutor/lib/permit2
 	url = https://github.com/Uniswap/permit2
+[submodule "permit2batchExecutor/lib/openzeppelin-contracts"]
+	path = permit2batchExecutor/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
