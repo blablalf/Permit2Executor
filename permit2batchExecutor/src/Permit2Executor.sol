@@ -37,6 +37,7 @@ contract Permit2Executor is Pausable, Ownable2Step {
     // Errors
     error NotSupportedToken(address token);
     error AlreadySupportedToken(address token);
+    error SwapFailed(uint256 amount, address token);
 
     modifier onlyOwnerIfPaused() {
         if (paused() && owner() != _msgSender())
@@ -63,9 +64,14 @@ contract Permit2Executor is Pausable, Ownable2Step {
     function execSwapWithPermit2(Permit2Params calldata permit2Params) external whenNotPaused {
         if (!isTokenSupported[permit2Params.token])
             revert NotSupportedToken(permit2Params.token);
+        uint256 tokenBalance = IERC20(permit2Params.token).balanceOf(address(this));
         _execPermit2(permit2Params);
 
         // todo odos single swap by taking care to take the permit owner and not the msg.sender
+
+        uint256 newTokenBalance = IERC20(permit2Params.token).balanceOf(address(this));
+        if (tokenBalance < newTokenBalance)
+            revert SwapFailed(newTokenBalance - tokenBalance, permit2Params.token);
     }
 
     function execSwapBatchWithPermit2(
@@ -73,14 +79,24 @@ contract Permit2Executor is Pausable, Ownable2Step {
         ISignatureTransfer.SignatureTransferDetails[] calldata transferDetails,
         bytes calldata signature
     ) external whenNotPaused {
+        uint256[] memory tokenBalances;
         for (uint256 i = 0; i < permit.permitted.length; i++) {
             address tokenAddress = permit.permitted[i].token;
             if (!isTokenSupported[tokenAddress])
                 revert NotSupportedToken(tokenAddress);
+            tokenBalances[i] = IERC20(tokenAddress).balanceOf(address(this));
         }
         _execPermit2Batch(permit, transferDetails, signature);
 
         // todo odos batched swap by taking care to take the permit owner and not the msg.sender
+
+        uint256[] memory newTokenBalances;
+        for (uint256 i = 0; i < permit.permitted.length; i++) {
+            address tokenAddress = permit.permitted[i].token;
+            newTokenBalances[i] = IERC20(tokenAddress).balanceOf(address(this));
+            if (tokenBalances[i] < newTokenBalances[i])
+                revert SwapFailed(newTokenBalances[i] - tokenBalances[i], tokenAddress);
+        }
     }
 
     function approveNewTokens(IERC20[] memory tokens) public onlyOwnerIfPaused {
