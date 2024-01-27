@@ -2,7 +2,7 @@
 pragma solidity ^0.8.21;
 
 import {
-    IPermit2, ISignatureTransfer
+    IPermit2, ISignatureTransfer, IAllowanceTransfer
 } from "permit2/src/interfaces/IPermit2.sol";
 import {
     Ownable,
@@ -26,16 +26,14 @@ struct Permit2Params {
 
 contract Permit2Executor is Pausable, Ownable2Step {
 
+    // Libs
     using SafeERC20 for IERC20;
 
-    error NotSupportedToken(address token);
-    error NotSupportedRouter(address router);
+    // Errors
     error AlreadySupportedToken(address token);
 
     // Storage
-
-    // The canonical permit2 contract.
-    IPermit2 public immutable permit2;
+    IPermit2 public immutable permit2; // The canonical permit2 contract.
     address public router;
     IERC20[] public supportedTokens;
     mapping(address => bool) public isTokenSupported;
@@ -84,6 +82,10 @@ contract Permit2Executor is Pausable, Ownable2Step {
             permit2Params.signature
         );
     }
+
+    // function execPermit2Batch(IAllowanceTransfer.AllowanceTransferDetails[] calldata transferDetails) {
+
+    // }
 
     function approveNewTokens(IERC20[] memory tokens) public {
         for (uint256 i = 0; i < tokens.length; i++) {
