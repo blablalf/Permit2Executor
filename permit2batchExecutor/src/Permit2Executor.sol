@@ -2,7 +2,7 @@
 pragma solidity ^0.8.21;
 
 import {
-    IPermit2, ISignatureTransfer, IAllowanceTransfer
+    IPermit2, ISignatureTransfer
 } from "permit2/src/interfaces/IPermit2.sol";
 import {
     Ownable,
@@ -30,6 +30,7 @@ contract Permit2Executor is Pausable, Ownable2Step {
     using SafeERC20 for IERC20;
 
     // Errors
+    error NotSupportedToken(address token);
     error AlreadySupportedToken(address token);
 
     // Storage
@@ -37,6 +38,12 @@ contract Permit2Executor is Pausable, Ownable2Step {
     address public router;
     IERC20[] public supportedTokens;
     mapping(address => bool) public isTokenSupported;
+
+    modifier onlyOwnerIfPaused() {
+        if (paused() && owner() != _msgSender())
+            revert OwnableUnauthorizedAccount(_msgSender());
+        _;
+    }
 
     constructor(IPermit2 _permit2, address _router) Ownable(_msgSender()) {
         permit2 = _permit2;
@@ -46,7 +53,7 @@ contract Permit2Executor is Pausable, Ownable2Step {
     function setRouter(address _router) external onlyOwner {
         router = _router;
     }
-    
+
     function changeRouterAndAllowance(address _router) external onlyOwner {
         router = _router;
         IERC20[] memory _supportedTokens = supportedTokens;
@@ -56,7 +63,7 @@ contract Permit2Executor is Pausable, Ownable2Step {
 
     // Deposit some amount of an ERC20 token into this contract
     // using Permit2.
-    function execPermit2(Permit2Params calldata permit2Params) internal {
+    function _execPermit2(Permit2Params calldata permit2Params) internal {
         // Transfer tokens from the caller to ourselves.
         permit2.permitTransferFrom(
             // The permit message.
@@ -83,11 +90,52 @@ contract Permit2Executor is Pausable, Ownable2Step {
         );
     }
 
-    // function execPermit2Batch(IAllowanceTransfer.AllowanceTransferDetails[] calldata transferDetails) {
+    /*
+     * @dev Withdraws tokens from this contract to the caller.
+     * @notice ISignatureTransfer.SignatureTransferDetails({
+     *           to: address(this),
+     *           requestedAmount: theAmountYouNeedForThisTokenIndex
+     *       }),
+     * @param token The token to withdraw.
+     * @param amount The amount to withdraw.
+     */
+    function _execPermit2Batch(
+        ISignatureTransfer.PermitBatchTransferFrom memory permit,
+        ISignatureTransfer.SignatureTransferDetails[] calldata transferDetails,
+        bytes calldata signature
+    ) internal {
+        permit2.permitTransferFrom(
+            permit,
+            transferDetails,
+            _msgSender(),
+            signature
+        );
+    }
 
-    // }
+    function execSwapWithPermit2(Permit2Params calldata permit2Params) external whenNotPaused {
+        if (!isTokenSupported[permit2Params.token])
+            revert NotSupportedToken(permit2Params.token);
+        _execPermit2(permit2Params);
 
-    function approveNewTokens(IERC20[] memory tokens) public {
+        // todo odos single swap by taking care to take the permit owner and not the msg.sender
+    }
+
+    function execSwapBatchWithPermit2(
+        ISignatureTransfer.PermitBatchTransferFrom memory permit,
+        ISignatureTransfer.SignatureTransferDetails[] calldata transferDetails,
+        bytes calldata signature
+    ) external whenNotPaused {
+        for (uint256 i = 0; i < permit.permitted.length; i++) {
+            address tokenAddress = permit.permitted[i].token;
+            if (!isTokenSupported[tokenAddress])
+                revert NotSupportedToken(tokenAddress);
+        }
+        _execPermit2Batch(permit, transferDetails, signature);
+
+        // todo odos batched swap by taking care to take the permit owner and not the msg.sender
+    }
+
+    function approveNewTokens(IERC20[] memory tokens) onlyOwnerIfPaused public {
         for (uint256 i = 0; i < tokens.length; i++) {
             IERC20 token = tokens[i];
             if (!isTokenSupported[address(token)]) {
