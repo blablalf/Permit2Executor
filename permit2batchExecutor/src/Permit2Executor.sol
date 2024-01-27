@@ -16,6 +16,9 @@ import { SafeERC20 } from
 import { Pausable } from
     "@openzeppelin/contracts/utils/Pausable.sol";
 
+// Libs
+using SafeERC20 for IERC20;
+
 struct Permit2Params {
     uint256 amount;
     uint256 nonce;
@@ -25,19 +28,15 @@ struct Permit2Params {
 }
 
 contract Permit2Executor is Pausable, Ownable2Step {
-
-    // Libs
-    using SafeERC20 for IERC20;
+    // Storage
+    IPermit2 public immutable PERMIT2; // The canonical permit2 contract.
+    address public router;
+    IERC20[] public supportedTokens;
+    mapping(address token => bool isSupported) public isTokenSupported;
 
     // Errors
     error NotSupportedToken(address token);
     error AlreadySupportedToken(address token);
-
-    // Storage
-    IPermit2 public immutable permit2; // The canonical permit2 contract.
-    address public router;
-    IERC20[] public supportedTokens;
-    mapping(address => bool) public isTokenSupported;
 
     modifier onlyOwnerIfPaused() {
         if (paused() && owner() != _msgSender())
@@ -46,7 +45,7 @@ contract Permit2Executor is Pausable, Ownable2Step {
     }
 
     constructor(IPermit2 _permit2, address _router) Ownable(_msgSender()) {
-        permit2 = _permit2;
+        PERMIT2 = _permit2;
         router = _router;
     }
 
@@ -61,11 +60,62 @@ contract Permit2Executor is Pausable, Ownable2Step {
         approveNewTokens(_supportedTokens);
     }
 
+    function execSwapWithPermit2(Permit2Params calldata permit2Params) external whenNotPaused {
+        if (!isTokenSupported[permit2Params.token])
+            revert NotSupportedToken(permit2Params.token);
+        _execPermit2(permit2Params);
+
+        // todo odos single swap by taking care to take the permit owner and not the msg.sender
+    }
+
+    function execSwapBatchWithPermit2(
+        ISignatureTransfer.PermitBatchTransferFrom memory permit,
+        ISignatureTransfer.SignatureTransferDetails[] calldata transferDetails,
+        bytes calldata signature
+    ) external whenNotPaused {
+        for (uint256 i = 0; i < permit.permitted.length; i++) {
+            address tokenAddress = permit.permitted[i].token;
+            if (!isTokenSupported[tokenAddress])
+                revert NotSupportedToken(tokenAddress);
+        }
+        _execPermit2Batch(permit, transferDetails, signature);
+
+        // todo odos batched swap by taking care to take the permit owner and not the msg.sender
+    }
+
+    function approveNewTokens(IERC20[] memory tokens) public onlyOwnerIfPaused {
+        for (uint256 i = 0; i < tokens.length; i++) {
+            IERC20 token = tokens[i];
+            if (!isTokenSupported[address(token)]) {
+                token.forceApprove(router, type(uint256).max);
+                supportedTokens.push(token);
+                isTokenSupported[address(token)] = true;
+            }
+        }
+    }
+
+    function revokeApproval(IERC20 token) public onlyOwner {
+        if (isTokenSupported[address(token)]) {
+            token.forceApprove(router, 0);
+            isTokenSupported[address(token)] = false;
+        }
+    }
+    
+    function revokeApprovals(IERC20[] memory tokens) public {
+        for (uint256 i = 0; i < tokens.length; i++) {
+            revokeApproval(tokens[i]);
+        }
+    }
+
+    function revokeApprovals() public {
+        revokeApprovals(supportedTokens);
+    }
+
     // Deposit some amount of an ERC20 token into this contract
     // using Permit2.
     function _execPermit2(Permit2Params calldata permit2Params) internal {
         // Transfer tokens from the caller to ourselves.
-        permit2.permitTransferFrom(
+        PERMIT2.permitTransferFrom(
             // The permit message.
             ISignatureTransfer.PermitTransferFrom({
                 permitted: ISignatureTransfer.TokenPermissions({
@@ -104,64 +154,12 @@ contract Permit2Executor is Pausable, Ownable2Step {
         ISignatureTransfer.SignatureTransferDetails[] calldata transferDetails,
         bytes calldata signature
     ) internal {
-        permit2.permitTransferFrom(
+        PERMIT2.permitTransferFrom(
             permit,
             transferDetails,
             _msgSender(),
             signature
         );
-    }
-
-    function execSwapWithPermit2(Permit2Params calldata permit2Params) external whenNotPaused {
-        if (!isTokenSupported[permit2Params.token])
-            revert NotSupportedToken(permit2Params.token);
-        _execPermit2(permit2Params);
-
-        // todo odos single swap by taking care to take the permit owner and not the msg.sender
-    }
-
-    function execSwapBatchWithPermit2(
-        ISignatureTransfer.PermitBatchTransferFrom memory permit,
-        ISignatureTransfer.SignatureTransferDetails[] calldata transferDetails,
-        bytes calldata signature
-    ) external whenNotPaused {
-        for (uint256 i = 0; i < permit.permitted.length; i++) {
-            address tokenAddress = permit.permitted[i].token;
-            if (!isTokenSupported[tokenAddress])
-                revert NotSupportedToken(tokenAddress);
-        }
-        _execPermit2Batch(permit, transferDetails, signature);
-
-        // todo odos batched swap by taking care to take the permit owner and not the msg.sender
-    }
-
-    function approveNewTokens(IERC20[] memory tokens) onlyOwnerIfPaused public {
-        for (uint256 i = 0; i < tokens.length; i++) {
-            IERC20 token = tokens[i];
-            if (!isTokenSupported[address(token)]) {
-                token.forceApprove(router, type(uint256).max);
-                supportedTokens.push(token);
-                isTokenSupported[address(token)] = true;
-            }
-            
-        }
-    }
-
-    function revokeApproval(IERC20 token) onlyOwner public {
-        if (isTokenSupported[address(token)]) {
-            token.forceApprove(router, 0);
-            isTokenSupported[address(token)] = false;
-        }
-    }
-    
-    function revokeApprovals(IERC20[] memory tokens) public {
-        for (uint256 i = 0; i < tokens.length; i++) {
-            revokeApproval(tokens[i]);
-        }
-    }
-
-    function revokeApprovals() public {
-        revokeApprovals(supportedTokens);
     }
 
 }
